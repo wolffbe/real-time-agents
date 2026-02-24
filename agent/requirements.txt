@@ -1,0 +1,10 @@
+flask
+flask-cors
+langchain
+langchain-anthropic
+langchain-core
+python-dotenv
+redis
+gunicorn
+requests
+langfuse

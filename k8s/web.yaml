@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-config
+  namespace: real-time-agents
+data:
+  AGENT_SERVICE_URL: "http://agent:5001"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: real-time-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: web
+        image: real-time-agents/web:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 5000
+        envFrom:
+        - configMapRef:
+            name: web-config
+        env:
+        - name: HOPSWORKS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: hopsworks-secrets
+              key: HOPSWORKS_API_KEY
+        - name: HOPSWORKS_PROJECT
+          valueFrom:
+            secretKeyRef:
+              name: hopsworks-secrets
+              key: HOPSWORKS_PROJECT
+        - name: HOPSWORKS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: hopsworks-secrets
+              key: HOPSWORKS_HOST
+        resources:
+          requests:
+            memory: "256Mi"
+          limits:
+            memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: real-time-agents
+spec:
+  selector:
+    app: web
+  ports:
+  - port: 5000
+    targetPort: 5000

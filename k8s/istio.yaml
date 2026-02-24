@@ -1,0 +1,71 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: real-time-agents-gateway
+  namespace: real-time-agents
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: real-time-agents
+  namespace: real-time-agents
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - real-time-agents-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /agent/
+    rewrite:
+      uri: /
+    route:
+    - destination:
+        host: agent
+        port:
+          number: 5001
+    timeout: 60s
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: web
+        port:
+          number: 5000
+    timeout: 30s
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: agent
+  namespace: real-time-agents
+spec:
+  host: agent
+  trafficPolicy:
+    connectionPool:
+      http:
+        h2UpgradePolicy: DO_NOT_UPGRADE
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: web
+  namespace: real-time-agents
+spec:
+  host: web
+  trafficPolicy:
+    connectionPool:
+      http:
+        h2UpgradePolicy: DO_NOT_UPGRADE

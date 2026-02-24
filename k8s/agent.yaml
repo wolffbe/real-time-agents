@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+  namespace: real-time-agents
+data:
+  LANGFUSE_HOST: "http://langfuse-web.langfuse.svc.cluster.local:3000"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://langfuse-web.langfuse.svc.cluster.local:3000/api/public/otel"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+  namespace: real-time-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent
+  template:
+    metadata:
+      labels:
+        app: agent
+    spec:
+      containers:
+      - name: agent
+        image: real-time-agents/agent:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 5001
+        envFrom:
+        - secretRef:
+            name: agent-secrets
+        - configMapRef:
+            name: agent-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent
+  namespace: real-time-agents
+spec:
+  selector:
+    app: agent
+  ports:
+  - port: 5001
+    targetPort: 5001

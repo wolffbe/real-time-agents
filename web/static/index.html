@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Event Streaming</title>
+    <style>
+        body { font-family: Arial; max-width: 600px; margin: 50px auto; padding: 20px; }
+        button { background: #2563eb; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }
+        .log { margin-top: 20px; padding: 10px; background: #f3f4f6; border-radius: 4px; }
+        
+        /* Chat widget styles */
+        .chat-widget {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 350px;
+            height: 500px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            display: flex;
+            flex-direction: column;
+            transition: all 0.3s ease;
+        }
+        
+        .chat-widget.minimized {
+            height: 60px;
+            width: 60px;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        
+        .chat-header {
+            background: #2563eb;
+            color: white;
+            padding: 15px;
+            border-radius: 12px 12px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .chat-widget.minimized .chat-header {
+            border-radius: 50%;
+            justify-content: center;
+            height: 100%;
+        }
+        
+        .chat-widget.minimized .chat-body,
+        .chat-widget.minimized .chat-input,
+        .chat-widget.minimized .minimize-text {
+            display: none;
+        }
+        
+        .chat-icon {
+            font-size: 24px;
+        }
+        
+        .minimize-btn {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 0;
+        }
+        
+        .chat-body {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .chat-message {
+            padding: 10px 12px;
+            border-radius: 8px;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+        
+        .chat-message.user {
+            background: #2563eb;
+            color: white;
+            align-self: flex-end;
+            margin-left: auto;
+        }
+        
+        .chat-message.bot {
+            background: #f3f4f6;
+            color: #333;
+            align-self: flex-start;
+        }
+        
+        .chat-input {
+            padding: 15px;
+            border-top: 1px solid #e5e7eb;
+            display: flex;
+            gap: 10px;
+        }
+        
+        .chat-input input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            outline: none;
+        }
+        
+        .chat-input button {
+            padding: 10px 16px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        
+        .chat-input button:hover {
+            background: #1d4ed8;
+        }
+    </style>
+</head>
+<body>
+    <h1>Event Streaming to Hopsworks</h1>
+
+    <div style="margin-bottom: 20px; padding: 15px; background: #f0f9ff; border-radius: 8px;">
+        <label for="customerSelect" style="font-weight: bold;">Logged in as: </label>
+        <select id="customerSelect" onchange="switchCustomer()" style="padding: 8px; border-radius: 4px; border: 1px solid #ccc;">
+            <option value="1">Alice Johnson (alice@example.com) - Premium</option>
+            <option value="2">Bob Smith (bob@example.com) - Basic</option>
+            <option value="3">Carol White (carol@example.com) - Premium (Suspended)</option>
+            <option value="4">David Brown (david@example.com) - Enterprise</option>
+            <option value="5">Eve Davis (eve@example.com) - Basic</option>
+        </select>
+    </div>
+
+    <button onclick="sendEvent()">Send Test Event</button>
+    <div class="log" id="log"></div>
+
+    <!-- Chat Widget -->
+    <div class="chat-widget minimized" id="chatWidget">
+        <div class="chat-header" onclick="toggleChat()">
+            <span class="minimize-text">💬 Chat</span>
+            <span class="chat-icon">💬</span>
+            <button class="minimize-btn" onclick="toggleChat(); event.stopPropagation()">−</button>
+        </div>
+        <div class="chat-body" id="chatBody">
+        </div>
+        <div class="chat-input">
+            <input type="text" id="chatInput" placeholder="Type a message..." onkeypress="handleEnter(event)">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script>
+        const userId = 'user_' + Math.random().toString(36).substr(2, 9);
+        let conversationHistory = [];
+        let userEvents = [];
+        let customerId = 1;  // Current logged-in customer
+        let sessionId = null;
+
+        // Start session on page load
+        async function startSession() {
+            try {
+                const res = await fetch('/session/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        customer_id: customerId,
+                        user_agent: navigator.userAgent,
+                        screen_width: window.screen.width,
+                        screen_height: window.screen.height
+                    })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    sessionId = data.session_id;
+                    console.log('Session started:', sessionId);
+                }
+            } catch (e) {
+                console.error('Failed to start session:', e);
+            }
+        }
+
+        // End session on page unload
+        function endSession() {
+            if (sessionId) {
+                navigator.sendBeacon('/session/end', JSON.stringify({ session_id: sessionId }));
+            }
+        }
+
+        function switchCustomer() {
+            customerId = parseInt(document.getElementById('customerSelect').value);
+            // Reset chat when switching customers
+            conversationHistory = [];
+            userEvents = [];
+            document.getElementById('chatBody').innerHTML = '';
+            trackEvent('customer_switched', { customer_id: customerId });
+        }
+
+        // Track event locally and send to server
+        function trackEvent(eventName, properties = {}) {
+            const event = {
+                event: eventName,
+                distinct_id: userId,
+                timestamp: new Date().toISOString(),
+                properties: { page: window.location.href, ...properties }
+            };
+
+            // Store locally for chat context
+            userEvents.push({
+                event: eventName,
+                time: new Date().toLocaleTimeString(),
+                ...properties
+            });
+
+            // Keep only last 20 events
+            if (userEvents.length > 20) {
+                userEvents = userEvents.slice(-20);
+            }
+
+            // Send to server with session header
+            const headers = {'Content-Type': 'application/json'};
+            if (sessionId) {
+                headers['X-Session-ID'] = sessionId;
+            }
+
+            fetch('/events', {
+                method: 'POST',
+                headers: headers,
+                credentials: 'include',
+                body: JSON.stringify(event)
+            });
+
+            return event;
+        }
+
+        // Build context string from user events
+        function getEventContext() {
+            if (userEvents.length === 0) return '';
+
+            const eventSummary = userEvents.map(e => {
+                let desc = `[${e.time}] ${e.event}`;
+                if (e.error) desc += `: ${e.error}`;
+                if (e.button) desc += `: clicked "${e.button}"`;
+                return desc;
+            }).join('\n');
+
+            return `\n\nUser's recent activity on the website:\n${eventSummary}`;
+        }
+
+        function sendEvent() {
+            document.getElementById('log').innerHTML +=
+                `<div>${new Date().toLocaleTimeString()} - Event sent ✓</div>`;
+        }
+
+        // Agent service URL (configure for your environment)
+        const AGENT_URL = window.AGENT_URL || '/agent';
+
+        // Execute actions received from the agent via webhook
+        function executeAction(action) {
+            if (action.action === 'click_button') {
+                const buttonText = action.button_text;
+                const buttons = Array.from(document.querySelectorAll('button'));
+                const button = buttons.find(b =>
+                    b.textContent.trim().toLowerCase().includes(buttonText.toLowerCase())
+                );
+
+                if (button && !button.closest('.chat-widget')) {
+                    button.click();
+                    trackEvent('bot_clicked_button', { button: buttonText });
+                    return { success: true, message: `Clicked button "${button.textContent.trim()}"` };
+                } else {
+                    return { success: false, message: `Could not find button "${buttonText}"` };
+                }
+            }
+            return { success: false, message: `Unknown action: ${action.action}` };
+        }
+
+        // Poll for pending actions from the agent
+        async function pollForActions() {
+            try {
+                const headers = {'Content-Type': 'application/json'};
+                if (sessionId) headers['X-Session-ID'] = sessionId;
+
+                const res = await fetch('/webhook/pending-actions', {
+                    headers: headers,
+                    credentials: 'include'
+                });
+                const data = await res.json();
+
+                if (data.actions && data.actions.length > 0) {
+                    for (const action of data.actions) {
+                        executeAction(action);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to poll for actions:', e);
+            }
+        }
+
+        // Start polling for actions
+        setInterval(pollForActions, 2000);
+        
+        // Chat functions
+        function toggleChat() {
+            const widget = document.getElementById('chatWidget');
+            widget.classList.toggle('minimized');
+
+            if (!widget.classList.contains('minimized')) {
+                document.getElementById('chatInput').focus();
+                trackEvent('chat_opened');
+
+                // Show welcome message if chat is empty
+                const chatBody = document.getElementById('chatBody');
+                if (chatBody.children.length === 0) {
+                    const welcomeMsg = document.createElement('div');
+                    welcomeMsg.className = 'chat-message bot';
+                    welcomeMsg.textContent = "Hi! How can I help you today?";
+                    chatBody.appendChild(welcomeMsg);
+                }
+            }
+        }
+        
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+
+            if (!message) return;
+
+            // Add user message to UI
+            const chatBody = document.getElementById('chatBody');
+            const userMsg = document.createElement('div');
+            userMsg.className = 'chat-message user';
+            userMsg.textContent = message;
+            chatBody.appendChild(userMsg);
+
+            // Add to conversation history
+            conversationHistory.push({ role: 'user', content: message });
+
+            // Track chat message event
+            trackEvent('chat_message_sent', { message_length: message.length });
+
+            input.value = '';
+            chatBody.scrollTop = chatBody.scrollHeight;
+
+            // Create bot message element for streaming
+            const botMsg = document.createElement('div');
+            botMsg.className = 'chat-message bot';
+            botMsg.textContent = '';
+            chatBody.appendChild(botMsg);
+            chatBody.scrollTop = chatBody.scrollHeight;
+
+            // Call agent service with streaming
+            try {
+                await callAgentStream(message, botMsg, chatBody);
+            } catch (error) {
+                botMsg.textContent = 'Sorry, could not connect. Please try again.';
+            }
+
+            chatBody.scrollTop = chatBody.scrollHeight;
+        }
+
+        // Call the agent service with streaming
+        async function callAgentStream(message, botMsgElement, chatBody) {
+            const webhookUrl = `${window.location.origin}/webhook/agent-action`;
+
+            const response = await fetch(`${AGENT_URL}/chat/stream`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    session_id: sessionId || 'default',
+                    message: message,
+                    customer_id: customerId,
+                    webhook_url: webhookUrl,
+                    user_events: userEvents
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Stream request failed');
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const text = decoder.decode(value);
+                const lines = text.split('\n');
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.chunk) {
+                                botMsgElement.textContent += data.chunk;
+                                chatBody.scrollTop = chatBody.scrollHeight;
+                            }
+                            if (data.action === 'click_button') {
+                                // Execute the button click immediately
+                                const buttonText = data.button_text;
+                                const buttons = Array.from(document.querySelectorAll('button'));
+                                const button = buttons.find(b =>
+                                    b.textContent.trim().toLowerCase().includes(buttonText.toLowerCase()) &&
+                                    !b.closest('.chat-widget')
+                                );
+                                if (button) {
+                                    button.click();
+                                    trackEvent('bot_clicked_button', { button: buttonText });
+                                }
+                            }
+                            if (data.error) {
+                                botMsgElement.textContent = 'Error: ' + data.error;
+                            }
+                        } catch (e) {
+                            // Ignore parse errors for incomplete chunks
+                        }
+                    }
+                }
+            }
+        }
+        
+        function handleEnter(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+        
+        // Initialize on page load
+        window.onload = async () => {
+            await startSession();
+            trackEvent('page_view', {
+                title: document.title,
+                referrer: document.referrer
+            });
+            startIdleTimer();
+        };
+
+        // End session on page unload
+        window.addEventListener('beforeunload', endSession);
+
+        // Track JavaScript errors
+        window.onerror = (message, source, lineno) => {
+            trackEvent('error', { error: message, source: source, line: lineno });
+        };
+
+        // Track clicks on any button
+        document.addEventListener('click', (e) => {
+            if (e.target.tagName === 'BUTTON' && !e.target.closest('.chat-widget')) {
+                trackEvent('button_clicked', { button: e.target.textContent.trim() });
+            }
+        });
+
+        // Idle detection and proactive tips
+        let idleTimer = null;
+        let hasShownIdleTip = false;
+
+        const tips = [
+            "Need help? I can look up your account details, check your order status, or answer questions!",
+            "Did you know? You can ask me about your subscription plan or account balance.",
+            "Hi there! I can help you with your orders, account settings, or any questions you have.",
+            "Looking for something? Ask me about your recent orders or account information!"
+        ];
+
+        function startIdleTimer() {
+            resetIdleTimer();
+
+            // Listen for user activity
+            ['mousemove', 'keydown', 'scroll', 'click', 'touchstart'].forEach(event => {
+                document.addEventListener(event, resetIdleTimer, { passive: true });
+            });
+        }
+
+        function resetIdleTimer() {
+            if (idleTimer) clearTimeout(idleTimer);
+
+            // Only set timer if we haven't shown a tip yet
+            if (!hasShownIdleTip) {
+                idleTimer = setTimeout(showIdleTip, 5000);
+            }
+        }
+
+        function showIdleTip() {
+            const widget = document.getElementById('chatWidget');
+
+            // Only show if chat is minimized
+            if (widget.classList.contains('minimized')) {
+                hasShownIdleTip = true;
+
+                // Open the chat
+                widget.classList.remove('minimized');
+                trackEvent('idle_tip_shown');
+
+                // Add a tip message
+                const chatBody = document.getElementById('chatBody');
+                const tipMsg = document.createElement('div');
+                tipMsg.className = 'chat-message bot';
+                tipMsg.textContent = tips[Math.floor(Math.random() * tips.length)];
+                chatBody.appendChild(tipMsg);
+                chatBody.scrollTop = chatBody.scrollHeight;
+            }
+        }
+    </script>
+</body>
+</html>

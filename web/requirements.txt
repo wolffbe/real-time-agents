@@ -1,0 +1,11 @@
+flask
+flask-cors
+flask-session
+hopsworks[python]
+pandas
+python-dotenv
+pyarrow
+redis
+gunicorn
+requests
+psycopg2-binary

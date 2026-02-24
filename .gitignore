@@ -1,0 +1,4 @@
+.claude
+.env
+venv
+helm/real-time-agents/values-generated.yaml
